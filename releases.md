@@ -1,5 +1,9 @@
 # Releases
 
+## Unreleased
+
+  - Fixed `Scheduler#io_wait` reporting a timeout for an IO that was already ready. When a fiber resumed by the same `select` held the reactor past the deadline, the timer fired before the selector polled again; `io_wait` now checks the IO once more, without blocking, before reporting the timeout.
+
 ## v2.46.0
 
   - Fixed `Thread#kill` raising a `TypeError` while shutting down a thread with an active `Async::Reactor`.

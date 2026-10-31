@@ -36,6 +36,28 @@ describe Async::Scheduler do
 			s2.close
 		end
 		
+		it "returns readiness when the io became ready while another fiber held the reactor past the timeout" do
+			input, output = Socket.pair :UNIX, :STREAM, 0
+			wake_input, wake_output = Socket.pair :UNIX, :STREAM, 0
+			
+			waiter = reactor.async do
+				input.wait_readable(0.01)
+			end
+			
+			reactor.async do
+				# Resumed by the selector, this fiber makes the waiter's io ready, then holds the reactor past the waiter's timeout:
+				wake_input.wait_readable
+				output.write("a")
+				Fiber.blocking{sleep(0.02)}
+			end
+			
+			wake_output.write("x")
+			
+			expect(waiter.wait).to be == input
+		ensure
+			[input, output, wake_input, wake_output].each{|io| io&.close}
+		end
+		
 		it "can read a single character" do
 			s1, s2 = Socket.pair :UNIX, :STREAM, 0
 			

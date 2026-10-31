@@ -312,23 +312,29 @@ module Async
 			fiber = Fiber.current
 			expired = false
 			
+			# If an explicit timeout is specified, we expect that the user will handle it themselves. Otherwise, if we default to the io's timeout, we raise an exception:
+			raise_on_timeout = timeout.nil? && (timeout = io.timeout)
+			
 			if timeout
-				# If an explicit timeout is specified, we expect that the user will handle it themselves:
 				timer = @timers.after(timeout) do
 					expired = true
 					fiber.transfer
-				end
-			elsif timeout = io.timeout
-				# Otherwise, if we default to the io's timeout, we raise an exception:
-				timer = @timers.after(timeout) do
-					fiber.raise(::IO::TimeoutError, "Timeout (#{timeout}s) while waiting for IO to become ready!")
 				end
 			end
 			
 			# A selector wait may return a falsy result when the fiber is resumed without the requested IO becoming ready. For example, a deferred unblock from a previous blocking operation may arrive after the fiber has moved on to this wait. Retry these stale or spurious wake-ups without resetting the original timer.
 			until result = @selector.io_wait(fiber, io, events)
 				# If the original timer resumed the fiber, the false result represents the timeout rather than a spurious wake-up:
-				return false if expired
+				next unless expired
+				
+				# The timer may fire after the IO became ready but before the selector polled it again, e.g. when a fiber resumed by the same `select` held the reactor past the deadline. Check once more, without blocking, before reporting the timeout:
+				if result = Fiber.blocking{io.wait(events, 0)}
+					return result
+				end
+				
+				Kernel.raise ::IO::TimeoutError, "Timeout (#{timeout}s) while waiting for IO to become ready!" if raise_on_timeout
+				
+				return false
 			end
 			
 			return result
